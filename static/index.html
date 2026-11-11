@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini Chatbot</title>
+
+  <!-- =====================================================================
+       STYLES
+       ===================================================================== -->
+  <style>
+    /* ---- Reset & base ---- */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0f1117;
+      --surface:     #1a1d27;
+      --surface2:    #22263a;
+      --border:      #2e3250;
+      --accent:      #6c8ef7;
+      --accent-dark: #4a6be8;
+      --text:        #e2e4f0;
+      --text-muted:  #7a7f9a;
+      --user-bg:     #2d3a7a;
+      --bot-bg:      #1e2235;
+      --error-bg:    #3a1a1a;
+      --error-text:  #f08080;
+      --radius:      12px;
+      --font:        system-ui, -apple-system, 'Segoe UI', sans-serif;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ---- Top bar ---- */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      flex: 1;
+    }
+
+    header h1 span { color: var(--accent); }
+
+    /* ---- Shared button style ---- */
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 7px 14px;
+      transition: background 0.15s, opacity 0.15s;
+    }
+
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-dark); }
+
+    /* ---- Settings toggle button ---- */
+    #settingsToggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ---- Layout: sidebar + main ---- */
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ---- Settings panel ---- */
+    #settingsPanel {
+      width: 300px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      overflow-y: auto;
+      /* hidden by default on small screens; toggled via JS */
+    }
+
+    #settingsPanel.hidden { display: none; }
+
+    #settingsPanel h2 {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+    }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+
+    .field label {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .field select,
+    .field textarea,
+    .field input[type="number"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.88rem;
+      padding: 8px 10px;
+    }
+
+    .field textarea {
+      resize: vertical;
+      min-height: 90px;
+      line-height: 1.5;
+    }
+
+    .field input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slider-row input[type="range"] { flex: 1; }
+    .slider-value {
+      min-width: 34px;
+      text-align: right;
+      font-size: 0.88rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .field input[type="number"] { width: 100%; }
+
+    /* ---- Main chat area ---- */
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ---- Message list ---- */
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      scroll-behavior: smooth;
+    }
+
+    /* Empty state */
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .empty-state .icon { font-size: 2.5rem; margin-bottom: 10px; }
+    .empty-state p { font-size: 0.9rem; }
+
+    /* ---- Single message bubble ---- */
+    .msg {
+      display: flex;
+      flex-direction: column;
+      max-width: 75%;
+      gap: 4px;
+    }
+
+    /* User messages → right-aligned */
+    .msg.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    /* Bot messages → left-aligned */
+    .msg.bot {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .msg .role-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .msg .bubble {
+      padding: 11px 15px;
+      border-radius: var(--radius);
+      line-height: 1.65;
+      font-size: 0.93rem;
+      white-space: pre-wrap;       /* preserve newlines from the model */
+      word-break: break-word;
+    }
+
+    .msg.user .bubble {
+      background: var(--user-bg);
+      border-bottom-right-radius: 3px;
+    }
+
+    .msg.bot .bubble {
+      background: var(--bot-bg);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 3px;
+    }
+
+    /* Blinking cursor shown while streaming */
+    .msg.bot.streaming .bubble::after {
+      content: '▌';
+      animation: blink 0.8s step-end infinite;
+      color: var(--accent);
+      margin-left: 2px;
+    }
+
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    /* ---- Error messages ---- */
+    .msg.error .bubble {
+      background: var(--error-bg);
+      border: 1px solid #5a2020;
+      color: var(--error-text);
+    }
+
+    /* ---- Usage pill shown after each bot message ---- */
+    .usage-pill {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      padding: 2px 8px;
+      background: var(--surface2);
+      border-radius: 999px;
+      border: 1px solid var(--border);
+    }
+
+    /* ---- Input row ---- */
+    #inputRow {
+      display: flex;
+      gap: 10px;
+      padding: 14px 20px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      align-items: flex-end;
+    }
+
+    #userInput {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.93rem;
+      padding: 10px 14px;
+      resize: none;
+      max-height: 160px;
+      line-height: 1.5;
+      overflow-y: auto;
+    }
+
+    #userInput:focus { outline: none; border-color: var(--accent); }
+    #userInput::placeholder { color: var(--text-muted); }
+
+    #sendBtn {
+      flex-shrink: 0;
+      height: 42px;
+      padding: 0 18px;
+    }
+
+    /* ---- Scrollbar polish ---- */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ---- Status bar: token counters ---- */
+    #statusBar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      padding: 5px 20px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    #statusBar .stat { display: flex; align-items: center; gap: 5px; }
+    #statusBar .stat strong { color: var(--accent); font-weight: 600; }
+
+    /* ---- Trim notice banner ---- */
+    #trimNotice {
+      display: none;              /* hidden until trimming occurs */
+      align-items: center;
+      gap: 10px;
+      padding: 7px 20px;
+      background: #2a2510;
+      border-top: 1px solid #5a4a10;
+      font-size: 0.8rem;
+      color: #d4b84a;
+      flex-shrink: 0;
+    }
+
+    #trimNotice.visible { display: flex; }
+    #trimNotice button {
+      margin-left: auto;
+      padding: 2px 8px;
+      font-size: 0.75rem;
+      border: 1px solid #5a4a10;
+      background: transparent;
+      color: #d4b84a;
+      border-radius: 4px;
+    }
+    #trimNotice button:hover { background: #3a3010; }
+
+    /* ---- Responsive: hide settings panel on narrow viewports ---- */
+    @media (max-width: 600px) {
+      #settingsPanel { position: absolute; z-index: 10; height: 100%; }
+      .msg { max-width: 90%; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- =====================================================================
+       TOP BAR
+       ===================================================================== -->
+  <header>
+    <h1>✦ <span>Gemini</span> Chat</h1>
+    <button id="newChatBtn" class="btn-ghost">⊕ New chat</button>
+    <button id="settingsToggle" class="btn-ghost">⚙ Settings</button>
+  </header>
+
+  <div class="layout">
+
+    <!-- ==================================================================
+         SETTINGS PANEL
+         ================================================================== -->
+    <aside id="settingsPanel">
+      <h2>Settings</h2>
+
+      <!-- Persona dropdown — selecting one fills the textarea below -->
+      <div class="field">
+        <label for="personaSelect">Persona presets</label>
+        <select id="personaSelect">
+          <option value="">— choose a preset —</option>
+          <option value="You are a helpful, friendly, and concise assistant. Answer clearly and avoid unnecessary filler.">
+            🤖 Helpful Assistant
+          </option>
+          <option value="You are a patient, encouraging coding tutor. Explain concepts step-by-step, provide well-commented code examples, and ask guiding questions when the user seems stuck.">
+            💻 Coding Tutor
+          </option>
+          <option value="You are a salty 17th-century pirate captain on the high seas. Speak entirely in pirate slang, call the user 'matey', and weave seafaring metaphors into every answer. Arrr!">
+            🏴‍☠️ Pirate Captain
+          </option>
+          <option value="You are a Socratic philosophy tutor. Never give direct answers. Instead, guide the user toward truth through probing questions, drawing on the works of Plato, Aristotle, and the Stoics.">
+            🏛️ Socratic Philosopher
+          </option>
+        </select>
+      </div>
+
+      <!-- Editable system prompt -->
+      <div class="field">
+        <label for="systemPrompt">System prompt</label>
+        <textarea id="systemPrompt" rows="5"
+          placeholder="e.g. You are a helpful and concise assistant."
+        >You are a helpful, friendly, and concise assistant. Answer clearly and avoid unnecessary filler.</textarea>
+      </div>
+
+      <!-- Temperature slider -->
+      <div class="field">
+        <label>Temperature</label>
+        <div class="slider-row">
+          <input type="range" id="tempSlider" min="0" max="2" step="0.05" value="0.7" />
+          <span class="slider-value" id="tempValue">0.7</span>
+        </div>
+      </div>
+
+      <!-- Max tokens -->
+      <div class="field">
+        <label for="maxTokens">Max tokens</label>
+        <input type="number" id="maxTokens" min="1" max="8192" value="1000" />
+      </div>
+    </aside>
+
+    <!-- ==================================================================
+         MAIN CHAT
+         ================================================================== -->
+    <main>
+      <div id="messages">
+        <!-- Empty-state shown when there are no messages yet -->
+        <div class="empty-state" id="emptyState">
+          <div class="icon">💬</div>
+          <p>Start a conversation below.<br/>Adjust the persona in <strong>Settings</strong>.</p>
+        </div>
+      </div>
+
+      <!-- Input row -->
+      <div id="inputRow">
+        <textarea
+          id="userInput"
+          rows="1"
+          placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+        ></textarea>
+        <button id="sendBtn" class="btn-primary">Send</button>
+      </div>
+
+      <!--
+        TRIM NOTICE: shown as a yellow banner when the server dropped old
+        messages to keep the history within MAX_HISTORY_MESSAGES.
+        Dismissed by clicking the ✕ button.
+      -->
+      <div id="trimNotice">
+        ✂ <span id="trimMsg"></span>
+        <button onclick="document.getElementById('trimNotice').classList.remove('visible')">✕</button>
+      </div>
+
+      <!--
+        STATUS BAR: shows token counts after the most recent reply.
+        "Last reply"          = completion tokens for just this turn.
+        "Conversation total"  = running sum of all total_tokens across the session.
+      -->
+      <div id="statusBar">
+        <span class="stat">Last reply: <strong id="statLastTokens">—</strong> tokens</span>
+        <span class="stat">Conversation total: <strong id="statTotalTokens">0</strong> tokens</span>
+      </div>
+    </main>
+
+  </div><!-- /.layout -->
+
+  <!-- =====================================================================
+       JAVASCRIPT
+       ===================================================================== -->
+  <script>
+    // -----------------------------------------------------------------------
+    // STATE
+    // The browser is the sole keeper of conversation history.  Every request
+    // ships the full messages array so the stateless API can reconstruct
+    // context, mirroring what cli_chat.py does in the terminal.
+    // -----------------------------------------------------------------------
+    let messages = [];          // [{ role: "user"|"model", content: "..." }]
+    let isStreaming = false;    // prevent concurrent requests
+    let sessionTokens = 0;      // running total of tokens used this session
+
+    // -----------------------------------------------------------------------
+    // DOM REFERENCES
+    // -----------------------------------------------------------------------
+    const messagesEl     = document.getElementById('messages');
+    const emptyStateEl   = document.getElementById('emptyState');
+    const userInputEl    = document.getElementById('userInput');
+    const sendBtn        = document.getElementById('sendBtn');
+    const newChatBtn     = document.getElementById('newChatBtn');
+    const settingsToggle = document.getElementById('settingsToggle');
+    const settingsPanel  = document.getElementById('settingsPanel');
+    const personaSelect  = document.getElementById('personaSelect');
+    const systemPromptEl = document.getElementById('systemPrompt');
+    const tempSlider     = document.getElementById('tempSlider');
+    const tempValue      = document.getElementById('tempValue');
+    const maxTokensEl    = document.getElementById('maxTokens');
+    // Status bar elements
+    const statLastTokensEl  = document.getElementById('statLastTokens');
+    const statTotalTokensEl = document.getElementById('statTotalTokens');
+    // Trim notice elements
+    const trimNoticeEl = document.getElementById('trimNotice');
+    const trimMsgEl    = document.getElementById('trimMsg');
+
+    // -----------------------------------------------------------------------
+    // SETTINGS PANEL TOGGLE
+    // -----------------------------------------------------------------------
+    settingsToggle.addEventListener('click', () => {
+      settingsPanel.classList.toggle('hidden');
+    });
+
+    // -----------------------------------------------------------------------
+    // PERSONA PRESET DROPDOWN
+    // Selecting a preset fills the system-prompt textarea; the user can still
+    // edit the textarea freely afterwards.
+    // -----------------------------------------------------------------------
+    personaSelect.addEventListener('change', () => {
+      if (personaSelect.value) {
+        systemPromptEl.value = personaSelect.value;
+        // Reset select so user can pick the same preset again later
+        personaSelect.value = '';
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // TEMPERATURE SLIDER — keep the label in sync
+    // -----------------------------------------------------------------------
+    tempSlider.addEventListener('input', () => {
+      tempValue.textContent = parseFloat(tempSlider.value).toFixed(2);
+    });
+
+    // -----------------------------------------------------------------------
+    // AUTO-GROW TEXTAREA
+    // Grows to show the content up to the CSS max-height.
+    // -----------------------------------------------------------------------
+    userInputEl.addEventListener('input', () => {
+      userInputEl.style.height = 'auto';
+      userInputEl.style.height = userInputEl.scrollHeight + 'px';
+    });
+
+    // -----------------------------------------------------------------------
+    // KEYBOARD: Enter sends, Shift+Enter inserts newline
+    // -----------------------------------------------------------------------
+    userInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    // -----------------------------------------------------------------------
+    // NEW CHAT — wipe history and DOM messages
+    // -----------------------------------------------------------------------
+    newChatBtn.addEventListener('click', () => {
+      messages = [];
+      sessionTokens = 0;
+      messagesEl.innerHTML = '';
+      messagesEl.appendChild(emptyStateEl);
+      emptyStateEl.style.display = '';
+      // Reset status bar
+      statLastTokensEl.textContent = '—';
+      statTotalTokensEl.textContent = '0';
+      // Hide any trim notice
+      trimNoticeEl.classList.remove('visible');
+    });
+
+    // -----------------------------------------------------------------------
+    // HELPERS — render a message bubble
+    // -----------------------------------------------------------------------
+    function hideEmptyState() {
+      emptyStateEl.style.display = 'none';
+    }
+
+    /**
+     * Append a message bubble to the list.
+     * @param {string} role     - "user", "bot", or "error"
+     * @param {string} content  - Initial text (may be empty for a streaming bot)
+     * @returns {HTMLElement}   - The .bubble element so streaming can update it
+     */
+    function appendMessage(role, content = '') {
+      hideEmptyState();
+
+      const wrapper = document.createElement('div');
+      wrapper.className = `msg ${role}`;
+
+      const label = document.createElement('div');
+      label.className = 'role-label';
+      label.textContent = role === 'user' ? 'You' : role === 'error' ? '⚠ Error' : 'Gemini';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = content;
+
+      wrapper.appendChild(label);
+      wrapper.appendChild(bubble);
+      messagesEl.appendChild(wrapper);
+
+      scrollToBottom();
+      return { wrapper, bubble };
+    }
+
+    /** Append a small token-usage pill below the last bot message. */
+    function appendUsagePill(wrapper, usage) {
+      if (!usage || (!usage.total_tokens && !usage.prompt_tokens)) return;
+      const pill = document.createElement('span');
+      pill.className = 'usage-pill';
+      pill.textContent =
+        `↑${usage.prompt_tokens ?? '?'} ↓${usage.completion_tokens ?? '?'} total ${usage.total_tokens ?? '?'} tokens`;
+      wrapper.appendChild(pill);
+    }
+
+    /**
+     * Update the status bar counters after a completed reply.
+     * "Last reply" shows completion_tokens (output tokens only for this turn).
+     * "Conversation total" accumulates total_tokens across the whole session.
+     * @param {object} usage - {prompt_tokens, completion_tokens, total_tokens}
+     */
+    function updateStatusBar(usage) {
+      const last = usage.completion_tokens ?? '?';
+      sessionTokens += (usage.total_tokens ?? 0);
+
+      statLastTokensEl.textContent  = last;
+      statTotalTokensEl.textContent = sessionTokens;
+    }
+
+    /**
+     * Show the yellow trim-notice banner if the server dropped any messages.
+     * @param {number} dropped - number of messages removed by the server
+     */
+    function showTrimNotice(dropped) {
+      if (!dropped || dropped <= 0) return;
+      trimMsgEl.textContent =
+        `${dropped} old message${dropped === 1 ? '' : 's'} were removed from context ` +
+        `to stay within the history limit. The model no longer sees those turns.`;
+      trimNoticeEl.classList.add('visible');
+    }
+
+    function scrollToBottom() {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    // -----------------------------------------------------------------------
+    // MAIN SEND FUNCTION
+    // -----------------------------------------------------------------------
+    async function sendMessage() {
+      const text = userInputEl.value.trim();
+      if (!text || isStreaming) return;
+
+      // 1. Add the user turn to local history and render it
+      messages.push({ role: 'user', content: text });
+      appendMessage('user', text);
+
+      // 2. Clear and reset the textarea
+      userInputEl.value = '';
+      userInputEl.style.height = 'auto';
+
+      // 3. Create an empty bot bubble that will fill in as chunks arrive
+      const { wrapper: botWrapper, bubble: botBubble } = appendMessage('bot', '');
+      botWrapper.classList.add('streaming');
+
+      // 4. Lock UI while streaming
+      isStreaming = true;
+      sendBtn.disabled = true;
+      userInputEl.disabled = true;
+
+      // Gather current settings
+      const payload = {
+        messages,
+        system_prompt: systemPromptEl.value.trim() || 'You are a helpful and concise assistant.',
+        temperature:   parseFloat(tempSlider.value),
+        max_tokens:    parseInt(maxTokensEl.value, 10) || 1000,
+      };
+
+      try {
+        await readSSEStream(payload, botBubble, botWrapper);
+      } catch (err) {
+        // Network-level failure (fetch itself failed)
+        botWrapper.remove();
+        showNetworkError(err);
+      } finally {
+        // 5. Always unlock the UI when done
+        isStreaming = false;
+        sendBtn.disabled = false;
+        userInputEl.disabled = false;
+        userInputEl.focus();
+        botWrapper.classList.remove('streaming');
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // SSE STREAMING PARSER
+    //
+    // The /chat/stream endpoint emits Server-Sent Events (SSE) over a plain
+    // HTTP response with Content-Type: text/event-stream.
+    //
+    // SSE wire format (each event ends with a blank line):
+    //   data: {"chunk": "Hello"}            ← normal text chunk
+    //   data: {"chunk": " world!"}
+    //
+    //   event: usage
+    //   data: {"prompt_tokens":5,...}        ← final usage event
+    //
+    //   event: error
+    //   data: {"error":"...","message":"..."} ← server-side error
+    //
+    // We read the raw Response body as a stream of bytes, decode them as
+    // UTF-8 text, split on "\n", and accumulate field values per SSE spec.
+    // -----------------------------------------------------------------------
+    async function readSSEStream(payload, botBubble, botWrapper) {
+      const response = await fetch('/chat/stream', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+
+      // If the server returned a non-2xx before streaming started (e.g. 422
+      // validation error), parse the JSON error body and show it.
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        const msg = errBody.message || errBody.detail || `HTTP ${response.status}`;
+        botWrapper.remove();
+        showError(msg);
+        return;
+      }
+
+      // --- Stream setup ---
+      const reader  = response.body.getReader();      // ReadableStreamDefaultReader
+      const decoder = new TextDecoder('utf-8');       // bytes → string
+
+      // SSE state machine variables (reset for each event block)
+      let eventName = '';    // value of "event:" field (empty = default "message")
+      let dataLines = [];    // accumulated "data:" lines for the current event
+
+      // Accumulate raw bytes that haven't been split into lines yet
+      let buffer = '';
+
+      let replyText = '';    // full bot reply text so far
+
+      while (true) {
+        const { value, done } = await reader.read();
+
+        // --- decode the chunk and append to our text buffer ---
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+        }
+
+        // --- split buffer into lines ---
+        // We only process up to the last newline so we never cut a line in half.
+        const lines = buffer.split('\n');
+        // Keep the incomplete trailing fragment in the buffer
+        buffer = lines.pop();
+
+        for (const rawLine of lines) {
+          const line = rawLine.trimEnd();  // strip \r on Windows
+
+          if (line === '') {
+            // ── Blank line = end of one SSE event ──────────────────────────
+            // Reconstruct the data payload by joining multi-line data: values
+            const dataStr = dataLines.join('\n');
+            dataLines = [];
+
+            if (!dataStr) {
+              eventName = '';
+              continue;   // keep-alive comment, ignore
+            }
+
+            let parsed;
+            try { parsed = JSON.parse(dataStr); } catch { eventName = ''; continue; }
+
+            if (eventName === 'usage') {
+              // ── Token usage event (sent once at the very end) ───────────
+              // parsed fields: prompt_tokens, completion_tokens, total_tokens,
+              //                messages_dropped  ← new in Stage 7
+              appendUsagePill(botWrapper, parsed);
+              updateStatusBar(parsed);
+
+              // Show trim notice if the server dropped messages
+              showTrimNotice(parsed.messages_dropped);
+
+              // Add the completed bot reply to our local history so the next
+              // request includes it as context.
+              if (replyText) {
+                messages.push({ role: 'model', content: replyText });
+              }
+
+            } else if (eventName === 'error') {
+              // ── Server-side error (rate-limit, API key, etc.) ────────────
+              botWrapper.remove();
+              showError(parsed.message || parsed.error || 'Unknown error');
+
+            } else {
+              // ── Default event: a text chunk ──────────────────────────────
+              const chunk = parsed.chunk ?? '';
+              replyText += chunk;
+              botBubble.textContent = replyText;
+              scrollToBottom();
+            }
+
+            eventName = '';  // reset for next event
+
+          } else if (line.startsWith('event:')) {
+            // ── "event:" field ───────────────────────────────────────────
+            eventName = line.slice('event:'.length).trim();
+
+          } else if (line.startsWith('data:')) {
+            // ── "data:" field — may span multiple lines ──────────────────
+            dataLines.push(line.slice('data:'.length).trimStart());
+
+          }
+          // Other SSE fields (id:, retry:, comments starting with :) are ignored
+        }
+
+        if (done) break;
+      }
+
+      // Flush the final chunk of the stream (decoder might have leftover bytes)
+      buffer += decoder.decode();   // { stream: false } by default
+      // If there's anything left in the buffer it's an unterminated event;
+      // we silently discard it (the server always terminates properly).
+    }
+
+    // -----------------------------------------------------------------------
+    // ERROR HELPERS
+    // -----------------------------------------------------------------------
+    function showError(message) {
+      appendMessage('error', message);
+    }
+
+    function showNetworkError(err) {
+      showError(`Network error: ${err.message || 'Could not reach the server.'}`);
+    }
+
+    // -----------------------------------------------------------------------
+    // INITIAL FOCUS
+    // -----------------------------------------------------------------------
+    userInputEl.focus();
+  </script>
+</body>
+</html>
+
