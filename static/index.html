@@ -79,6 +79,12 @@
     }
     .btn-ghost:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
 
+    .nav-link {
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+
     .btn-primary {
       background: var(--accent);
       color: #fff;
@@ -369,6 +375,7 @@
        ===================================================================== -->
   <header>
     <h1>✦ <span>Gemini</span> Chat</h1>
+    <a href="/compare-ui" class="btn-ghost nav-link" title="Compare prompting strategies">⚖ Strategy Compare</a>
     <button id="newChatBtn" class="btn-ghost">⊕ New chat</button>
     <button id="settingsToggle" class="btn-ghost">⚙ Settings</button>
   </header>

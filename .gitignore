@@ -2,3 +2,6 @@
 __pycache__/
 venv/
 .venv/
+results.db
+results.db-wal
+results.db-shm

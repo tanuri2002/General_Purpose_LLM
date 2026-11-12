@@ -17,7 +17,10 @@ if str(CURRENT_DIR) not in sys.path:
 load_dotenv(CURRENT_DIR / ".env")
 
 import llm
-from llm import ask_llm, ask_llm_stream
+from llm import ask_llm, ask_llm_stream, ask_llm_timed
+from prompts import STRATEGIES, build_prompt
+import storage
+from storage import init_db, save_run, set_rating, get_history, get_summary
 
 STATIC_DIR = CURRENT_DIR / "static"
 
@@ -55,6 +58,9 @@ app = FastAPI(
     description="A multi-turn chat API powered by Google Gemini with conversation history, streaming, and token usage.",
     version="1.0.0",
 )
+
+# Initialise the SQLite database (creates results.db + table if absent)
+init_db()
 
 # Mount static files directory if present
 if STATIC_DIR.is_dir():
@@ -402,3 +408,244 @@ def chat_stream(request: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# =============================================================================
+# STRATEGY COMPARISON ENDPOINTS
+# =============================================================================
+
+class CompareRequest(BaseModel):
+    """Request payload for POST /compare."""
+    task: str = Field(..., min_length=1, description="The task or question to run through each strategy.")
+    strategies: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of strategies to run. Omit or pass null to run all.",
+    )
+    temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=512, ge=1)
+
+
+class StrategyResult(BaseModel):
+    """Result for one strategy."""
+    run_id: Optional[int] = None
+    strategy: str
+    system_prompt: Optional[str]
+    user_message: str
+    reply: Optional[str] = None
+    latency_seconds: Optional[float] = None
+    prompt_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    error: Optional[str] = None
+
+
+class CompareResponse(BaseModel):
+    """Response from POST /compare."""
+    task: str
+    results: List[StrategyResult]
+
+
+@app.get("/strategies", tags=["Compare"], summary="List available prompting strategies")
+def list_strategies():
+    """Return the ordered list of strategy identifiers from prompts.py."""
+    return {"strategies": STRATEGIES}
+
+
+@app.get("/compare-ui", summary="Serve Strategy Comparison Web UI", tags=["UI"])
+def compare_ui():
+    """Serve the strategy-comparison single-page app."""
+    compare_file = STATIC_DIR / "compare.html"
+    if not compare_file.is_file():
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"error": "UI file static/compare.html not found."},
+        )
+    return FileResponse(str(compare_file), media_type="text/html")
+
+
+@app.post(
+    "/compare",
+    response_model=CompareResponse,
+    tags=["Compare"],
+    summary="Run multiple prompting strategies and return results",
+)
+def compare(request: CompareRequest):
+    """Run the task through each selected strategy using ask_llm_timed.
+
+    Strategies are executed sequentially.  Each result includes the exact
+    system_prompt and user_message that was sent so the UI can show it.
+    Errors per strategy are captured without aborting the other strategies.
+    """
+    strategies_to_run = request.strategies or STRATEGIES
+
+    # Validate strategy names before making any API calls
+    invalid = [s for s in strategies_to_run if s not in STRATEGIES]
+    if invalid:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"error": f"Unknown strategies: {invalid}. Valid: {STRATEGIES}"},
+        )
+
+    results: List[StrategyResult] = []
+
+    for strategy in strategies_to_run:
+        system_prompt, user_message = build_prompt(strategy, request.task)
+
+        raw = ask_llm_timed(
+            system_prompt=system_prompt or "",
+            user_message=user_message,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+        )
+
+        if "error" in raw:
+            run_id = save_run(
+                task=request.task,
+                strategy=strategy,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                reply=None,
+                error=raw["error"],
+                temperature=request.temperature,
+                latency_seconds=None,
+                prompt_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+            )
+            results.append(StrategyResult(
+                run_id=run_id,
+                strategy=strategy,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                error=raw["error"],
+            ))
+        else:
+            run_id = save_run(
+                task=request.task,
+                strategy=strategy,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                reply=raw["reply"],
+                error=None,
+                temperature=request.temperature,
+                latency_seconds=raw["latency_seconds"],
+                prompt_tokens=raw["prompt_tokens"],
+                output_tokens=raw["output_tokens"],
+                total_tokens=raw["total_tokens"],
+            )
+            results.append(StrategyResult(
+                run_id=run_id,
+                strategy=strategy,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                reply=raw["reply"],
+                latency_seconds=raw["latency_seconds"],
+                prompt_tokens=raw["prompt_tokens"],
+                output_tokens=raw["output_tokens"],
+                total_tokens=raw["total_tokens"],
+            ))
+
+    return CompareResponse(task=request.task, results=results)
+
+
+# =============================================================================
+# RATING & HISTORY ENDPOINTS
+# =============================================================================
+
+class RateRequest(BaseModel):
+    """Payload for POST /rate."""
+    run_id: int = Field(..., description="ID returned by /compare for this result row.")
+    rating: int  = Field(..., ge=1, le=5, description="1-5 star rating.")
+
+
+class HistoryItem(BaseModel):
+    """One row from the runs table."""
+    id: int
+    created_at: str
+    task: str
+    strategy: str
+    system_prompt: Optional[str]
+    user_message: str
+    reply: Optional[str]
+    error: Optional[str]
+    temperature: Optional[float]
+    latency_seconds: Optional[float]
+    prompt_tokens: Optional[int]
+    output_tokens: Optional[int]
+    total_tokens: Optional[int]
+    rating: Optional[int]
+
+
+@app.post("/rate", tags=["Compare"], summary="Rate a comparison result 1-5 stars")
+def rate(request: RateRequest):
+    """Update the rating column for a saved run."""
+    updated = set_rating(request.run_id, request.rating)
+    if not updated:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"error": f"No run found with id={request.run_id}"},
+        )
+    return {"ok": True, "run_id": request.run_id, "rating": request.rating}
+
+
+@app.get(
+    "/history",
+    response_model=list[HistoryItem],
+    tags=["Compare"],
+    summary="Return recent comparison runs, newest first",
+)
+def history(limit: int = 50):
+    """Fetch saved runs from results.db, newest first."""
+    return get_history(limit=limit)
+
+
+class StrategySummary(BaseModel):
+    """Aggregated statistics for a prompting strategy."""
+    strategy: str
+    total_runs: int
+    avg_rating: Optional[float] = None
+    avg_latency: Optional[float] = None
+    avg_total_tokens: Optional[float] = None
+
+
+@app.get(
+    "/summary",
+    response_model=List[StrategySummary],
+    tags=["Compare"],
+    summary="Return aggregate statistics per prompting strategy",
+)
+def summary():
+    """Return per-strategy summary: total runs, avg rating, avg latency, avg tokens."""
+    db_rows = {row["strategy"]: row for row in get_summary()}
+    summaries: List[StrategySummary] = []
+
+    # Ensure all registered strategies appear even if they have 0 runs yet
+    for s in STRATEGIES:
+        if s in db_rows:
+            summaries.append(StrategySummary(**db_rows[s]))
+        else:
+            summaries.append(StrategySummary(
+                strategy=s,
+                total_runs=0,
+                avg_rating=None,
+                avg_latency=None,
+                avg_total_tokens=None,
+            ))
+
+    # Also include any strategies in the DB not currently in the STRATEGIES list
+    for s, row in db_rows.items():
+        if s not in STRATEGIES:
+            summaries.append(StrategySummary(**row))
+
+    # Sort: highest rated first (nulls last), then highest runs, then strategy name
+    summaries.sort(
+        key=lambda x: (
+            x.avg_rating is not None,
+            x.avg_rating if x.avg_rating is not None else -1.0,
+            x.total_runs,
+        ),
+        reverse=True,
+    )
+    return summaries
+
+
